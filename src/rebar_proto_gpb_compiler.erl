@@ -118,7 +118,8 @@ compile_gpb(Source, GpbOpts) ->
         {error, _Reason} ->
             ?ERROR("Failed to compile ~s~n", [Source]),
             ?FAIL
-    end.
+    end,
+    ?CONSOLE("Compiled ~s\n", [Source]).
 
 beam_file(ProtoFile, GpbOpts) ->
     proto_filename_to_path("ebin", ProtoFile, ".beam", GpbOpts).
