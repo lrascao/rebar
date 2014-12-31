@@ -31,6 +31,7 @@
 -export([run/4,
          run/7,
          run/8,
+         run/5,
          ok_tuple/3,
          error_tuple/5]).
 
@@ -63,20 +64,33 @@ run(Config, FirstFiles, SourceDir, SourceExt, TargetDir, TargetExt,
 run(Config, FirstFiles, SourceDir, SourceExt, TargetDir, TargetExt,
     Compile3Fn, Opts) ->
 
-    Recursive = proplists:get_value(recursive, Opts, true),
     %% Find all possible source files
+    Recursive = proplists:get_value(recursive, Opts, true),
     FoundFiles = rebar_utils:find_files_by_ext(SourceDir, SourceExt, Recursive),
+
     %% Remove first files from found files
     RestFiles = [Source || Source <- FoundFiles,
                            not lists:member(Source, FirstFiles)],
 
+    FirstTargets = compute_target_each(FirstFiles,
+                                       SourceDir, SourceExt,
+                                       TargetDir, TargetExt),
+    RestTargets = compute_target_each(RestFiles,
+                                      SourceDir, SourceExt,
+                                      TargetDir, TargetExt),
+    run(Config,
+        lists:zip(FirstFiles, FirstTargets),
+        lists:zip(RestFiles, RestTargets),
+        Compile3Fn, Opts).
+
+%% FirstUnits and RestUnits are lists of tuples: {Source,Target}
+run(Config, FirstUnits, RestUnits, Compile3Fn, Opts) ->
+
     %% Check opts for flag indicating that compile should check lastmod
     CheckLastMod = proplists:get_bool(check_last_mod, Opts),
 
-    run(Config, FirstFiles, RestFiles,
-        fun(S, C) ->
-                Target = target_file(S, SourceDir, SourceExt,
-                                     TargetDir, TargetExt),
+    run(Config, FirstUnits, RestUnits,
+        fun({S, Target}, C) ->
                 simple_compile_wrapper(S, Target, Compile3Fn, C, CheckLastMod)
         end).
 
@@ -101,6 +115,10 @@ simple_compile_wrapper(Source, Target, Compile3Fn, Config, true) ->
             skipped
     end.
 
+compute_target_each(Files, SourceDir, SourceExt, TargetDir, TargetExt) ->
+    [target_file(File, SourceDir, SourceExt, TargetDir, TargetExt)
+     || File <- Files].
+
 target_file(SourceFile, SourceDir, SourceExt, TargetDir, TargetExt) ->
     BaseFile = remove_common_path(SourceFile, SourceDir),
     filename:join([TargetDir, filename:basename(BaseFile, SourceExt) ++ TargetExt]).
@@ -115,8 +133,8 @@ remove_common_path1(FilenameParts, _) ->
     filename:join(FilenameParts).
 
 
-compile(Source, Config, CompileFn) ->
-    case CompileFn(Source, Config) of
+compile(Unit, Config, CompileFn) ->
+    case CompileFn(Unit, Config) of
         ok ->
             ok;
         skipped ->
@@ -127,23 +145,28 @@ compile(Source, Config, CompileFn) ->
 
 compile_each([], _Config, _CompileFn) ->
     ok;
-compile_each([Source | Rest], Config, CompileFn) ->
-    case compile(Source, Config, CompileFn) of
+compile_each([Unit | Rest], Config, CompileFn) ->
+    case compile(Unit, Config, CompileFn) of
         ok ->
-            ?CONSOLE("Compiled ~s\n", [Source]);
+            ?CONSOLE("Compiled ~s\n", [unit_source(Unit)]);
         {ok, Warnings} ->
             report(Warnings),
-            ?CONSOLE("Compiled ~s\n", [Source]);
+            ?CONSOLE("Compiled ~s\n", [unit_source(Unit)]);
         skipped ->
-            ?INFO("Skipped ~s\n", [Source]);
+            ?INFO("Skipped ~s\n", [unit_source(Unit)]);
         Error ->
             ?CONSOLE("Compiling ~s failed:\n",
-                     [maybe_absname(Config, Source)]),
+                     [maybe_absname(Config, unit_source(Unit))]),
             maybe_report(Error),
             ?DEBUG("Compilation failed: ~p\n", [Error]),
             ?FAIL
     end,
     compile_each(Rest, Config, CompileFn).
+
+unit_source({Source, _Target}) ->
+    Source;
+unit_source(Source) ->
+    Source.
 
 compile_queue(_Config, [], []) ->
     ok;
@@ -166,17 +189,17 @@ compile_queue(Config, Pids, Targets) ->
             ?DEBUG("Worker compilation failed: ~p\n", [Error]),
             ?FAIL;
 
-        {compiled, Source, Warnings} ->
+        {compiled, Unit, Warnings} ->
             report(Warnings),
-            ?CONSOLE("Compiled ~s\n", [Source]),
+            ?CONSOLE("Compiled ~s\n", [unit_source(Unit)]),
             compile_queue(Config, Pids, Targets);
 
-        {compiled, Source} ->
-            ?CONSOLE("Compiled ~s\n", [Source]),
+        {compiled, Unit} ->
+            ?CONSOLE("Compiled ~s\n", [unit_source(Unit)]),
             compile_queue(Config, Pids, Targets);
 
-        {skipped, Source} ->
-            ?INFO("Skipped ~s\n", [Source]),
+        {skipped, Unit} ->
+            ?INFO("Skipped ~s\n", [unit_source(Unit)]),
             compile_queue(Config, Pids, Targets);
 
         {'DOWN', Mref, _, Pid, normal} ->
