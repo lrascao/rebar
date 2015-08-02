@@ -97,6 +97,7 @@ init(true, BeamFiles, TargetDir) ->
                                  [Beam, Desc])
                 end,
             _ = [PrintWarning(Beam, Desc) || {Beam, {error, Desc}} <- Compiled],
+            cover:stop(),
             OkOpen
     end;
 init(Config, BeamFiles, TargetDir) ->
