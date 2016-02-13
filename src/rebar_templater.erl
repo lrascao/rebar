@@ -186,11 +186,15 @@ create1(Config, TemplateId) ->
     %% For each variable, see if it's defined in global vars -- if it is,
     %% prefer that value over the defaults
     Context2 = update_vars(Config, dict:fetch_keys(Context1), Context1),
-    ?DEBUG("Template ~p context: ~p\n", [TemplateId, dict:to_list(Context1)]),
+
+    %% Generate reltool app opts depending on OTP version
+    Context3 = insert_app_opts(Config, Context2),
+
+    ?DEBUG("Template ~p context: ~p\n", [TemplateId, dict:to_list(Context3)]),
 
     %% Handle variables that possibly include other variables in their
     %% definition
-    Context = resolve_variables(dict:to_list(Context2), Context2),
+    Context = resolve_variables(dict:to_list(Context3), Context3),
 
     ?DEBUG("Resolved Template ~p context: ~p\n",
            [TemplateId, dict:to_list(Context)]),
@@ -298,6 +302,26 @@ update_vars(Config, [Key | Rest], Dict) ->
     Value = rebar_config:get_global(Config, Key, dict:fetch(Key, Dict)),
     update_vars(Config, Rest, dict:store(Key, Value, Dict)).
 
+%%
+%% Insert reltool app opts into the provided dictionary
+%% These will be dependent on OTP release
+%%
+insert_app_opts(Config, Dict) ->
+    OtpVersion = rebar_require_vsn:version_tuple(rebar_utils:otp_release()),
+    AppOpts = get_app_opts(OtpVersion, Config),
+    dict:store(app_opts, AppOpts, Dict).
+
+%% R14 and below don't recognize the lib_dir option
+get_app_opts({Major, _, _}, _Config) when Major =< 14 ->
+    "{mod_cond, app}, {incl_cond, include}";
+%% R15 recognizes the lib_dir option but it must point explicitly to the
+%% ebin folder
+get_app_opts({15, _, _}, _Config) ->
+    "{mod_cond, app}, {incl_cond, include}, {lib_dir, \"../ebin\"}";
+%% R16 onwards recognizes the lib_dir option and it can be
+%% the whole folder with src and everything
+get_app_opts(_Rel, _Config) ->
+    "{mod_cond, app}, {incl_cond, include}, {lib_dir, \"..\"}".
 
 %%
 %% Given a string or binary, parse it into a list of terms, ala file:consult/1
